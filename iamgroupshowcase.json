@@ -1,0 +1,190 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "EC2 and SSH IAM Group showcase",
+  "Parameters": {
+        "AmiId" :
+        {
+            "Description" : "ID of the AMI to launch",
+            "Type" : "String",
+            "AllowedPattern" : "^ami-[0-9a-z]{8}$|^ami-[0-9a-z]{17}$"
+        },
+        "KeyPairName" :
+        {
+            "Description" : "Public/private key pairs allow you to securely connect to your instance after it launches",
+            "Type" : "AWS::EC2::KeyPair::KeyName"
+        },
+        "IAMGroupSSH" : 
+        {
+            "Description" : "Controls whether to configure the instance to allow the provided IAM group ID instance SSH access",
+            "Type" : "String"
+        },
+        "InstanceType" :
+        {
+            "Description" : "Amazon EC2 instance type",
+            "Type" : "String",
+            "Default" : "t2.micro",
+            "AllowedValues" :
+            [
+                "t2.micro",
+                "t2.small",
+                "t2.medium",
+                "t2.large",
+                "c4.large",
+                "c4.xlarge",
+                "m4.large",
+                "m4.xlarge"
+            ]
+        },
+    "VPC": {
+      "Description": "The VPC the EC2 instance is launched into.",
+      "Type": "AWS::EC2::VPC::Id"
+    },
+    "Subnet": {
+      "Description": "The subnet the EC2 instance is launched into.",
+      "Type": "AWS::EC2::Subnet::Id"
+    } 
+  },
+    "Conditions" :
+    {
+        "ConfigureEC2SSH" :
+        {
+            "Fn::Not" : [ { "Fn::Equals" : [ { "Ref" : "IAMGroupSSH" }, "" ] } ]
+        }
+    },
+  "Resources": {
+    "SecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "ssh",
+        "VpcId": {"Ref": "VPC"},
+        "SecurityGroupIngress": [{
+          "CidrIp": "0.0.0.0/0",
+          "FromPort": 22,
+          "IpProtocol": "tcp",
+          "ToPort": 22
+        }]
+      }
+    },
+    "InstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Condition" : "ConfigureEC2SSH",
+      "Properties": {
+        "Path": "/",
+        "Roles": [{"Ref": "Role"}]
+      }
+    },
+    "Role": {
+      "Type": "AWS::IAM::Role",
+      "Condition" : "ConfigureEC2SSH",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {
+              "Service": ["ec2.amazonaws.com"]
+            },
+            "Action": ["sts:AssumeRole"]
+          }]
+        },
+        "Path": "/",
+        "Policies": [{
+          "PolicyName": "iam",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Action": [
+                "iam:GetGroup"
+              ],
+              "Resource": [
+                { "Fn::Join": [ "", [ "arn:aws:iam::", { "Ref": "AWS::AccountId" }, ":group/", { "Ref": "IAMGroupSSH" } ] ] }
+              ]
+            }, {
+              "Effect": "Allow",
+              "Action": [
+                "iam:ListSSHPublicKeys",
+                "iam:GetSSHPublicKey"
+              ],
+              "Resource": [
+                {"Fn::Join": ["", ["arn:aws:iam::", {"Ref": "AWS::AccountId"},":user/*"]]}
+              ]
+            }]
+          }
+        }]
+      }
+    },
+    "Instance": {
+      "Type": "AWS::EC2::Instance",
+      "Metadata": {
+        "AWS::CloudFormation::Init": {
+          "config": {
+            "packages" : {
+               "yum" : {
+                 "git" : []
+               }
+            },
+            "commands": {
+              "clone_repo": {
+                "command": {
+                  "Fn::Join" : 
+                    ["",
+                      ["git clone -b usermgmt https://github.com/ewierschke/aws-ec2-ssh /usr/local/bin/aws-ec2-ssh",
+                      "\n"]
+                    ]
+                  }
+                },
+              "chmod_build.sh": {
+                "command": "chmod 755 /usr/local/bin/aws-ec2-ssh/build.sh"
+              },
+              "execute_build.sh": {
+                "command": "./build.sh"
+              }
+            },
+            "services": {
+              "sysvinit": {
+                "cfn-hup": {
+                  "enabled": "true",
+                  "ensureRunning": "true",
+                  "files": ["/etc/cfn/cfn-hup.conf", "/etc/cfn/hooks.d/cfn-auto-reloader.conf"]
+                },
+                "sshd": {
+                  "enabled": "true",
+                  "ensureRunning": "true"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Properties": {
+        "ImageId": {"Ref" : "AmiId"},
+        "IamInstanceProfile": {"Ref": "InstanceProfile"},
+        "InstanceType": {"Ref" : "InstanceType" },
+        "SecurityGroupIds": [{"Ref": "SecurityGroup"}],
+        "SubnetId": {"Ref": "Subnet"},
+        "UserData": {"Fn::Base64": {"Fn::Join": ["", [
+          "#!/bin/bash -x", "\n",
+          "/opt/aws/bin/cfn-init --verbose --stack=", {"Ref": "AWS::StackName"}, " --region=", {"Ref": "AWS::Region"}, " --resource=Instance", "\n",
+          "/opt/aws/bin/cfn-signal --exit-code=$? --stack=", {"Ref": "AWS::StackName"}, " --region=", {"Ref": "AWS::Region"}, " --resource=Instance", "\n"
+        ]]}},
+        "Tags": [{
+          "Key": "Name",
+          "Value": "ec2-ssh-iam-group-showcase"
+        }]
+      },
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Count": 1,
+          "Timeout": "PT15M"
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "PublicName": {
+      "Description": "The public name of the EC2 instance.",
+      "Value": {"Fn::GetAtt": ["Instance", "PublicDnsName"]}
+    }
+  }
+}

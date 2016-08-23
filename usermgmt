@@ -1,0 +1,1 @@
+*/8 * * * * root /usr/local/bin/usermgmt.sh -G `cat /usr/local/bin/groupname`
