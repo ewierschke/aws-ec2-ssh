@@ -48,9 +48,9 @@
             "Description" : "Public/private key pairs allow you to securely connect to your instance after it launches",
             "Type" : "AWS::EC2::KeyPair::KeyName"
         },
-        "IAMGroup" : 
+        "IAMGroupSSH" : 
         {
-            "Description" : "ID of the IAM group to be granted SSH access to instance",
+            "Description" : "Controls whether to configure the instance to allow the provided IAM group ID instance SSH access",
             "Type" : "String"
         },
         "InstanceType" :
@@ -202,6 +202,10 @@
         "AssignPublicIp" :
         {
             "Fn::Not" : [ { "Fn::Equals" : [ { "Ref" : "NoPublicIp" }, "true" ] } ]
+        },
+        "ConfigureEC2SSH" :
+        {
+            "Fn::Not" : [ { "Fn::Equals" : [ { "Ref" : "IAMGroupSSH" }, "" ] } ]
         }
     },
     "Mappings" :
@@ -218,6 +222,7 @@
         "InstanceProfile" : 
         {
             "Type" : "AWS::IAM::InstanceProfile",
+            "Condition" : "ConfigureEC2SSH",
             "Properties" : {
                 "Path" : "/",
                 "Roles" : [{"Ref": "InstanceRole"}]
@@ -226,6 +231,7 @@
         "InstanceRole": 
         {
             "Type": "AWS::IAM::Role",
+            "Condition" : "ConfigureEC2SSH",
             "Properties": {
                 "AssumeRolePolicyDocument": {
                     "Version": "2012-10-17",
@@ -243,6 +249,7 @@
         "InstancePolicyAllowIAMgroupSSHKeyAccess": 
         {
             "Type": "AWS::IAM::Policy",
+            "Condition" : "ConfigureEC2SSH",
             "Properties": {
                 "PolicyName" : "AllowIAMgroupSSHKeyAccess",
                 "PolicyDocument": {
@@ -251,7 +258,7 @@
                         "Effect": "Allow",
                         "Action": [ "iam:GetGroup" ],
                         "Resource": [
-                            { "Fn::Join": [ "", [ "arn:aws:iam::", { "Ref": "AWS::AccountId" }, ":group/", { "Ref": "IAMGroup" } ] ] }
+                            { "Fn::Join": [ "", [ "arn:aws:iam::", { "Ref": "AWS::AccountId" }, ":group/", { "Ref": "IAMGroupSSH" } ] ] }
                         ]
                     }, 
                     {
@@ -328,7 +335,14 @@
                                     { "Ref" : "AWS::NoValue" }
                                 ]
                             },
-                            "ec2sshsetup",
+                            {
+                                "Fn::If" :
+                                [
+                                    "ConfigureEC2SSH",
+                                    "ec2sshsetup",
+                                    { "Ref" : "AWS::NoValue" }
+                                ]
+                            },
                             "finalize",
                             {
                                 "Fn::If" :
@@ -359,7 +373,14 @@
                                     { "Ref" : "AWS::NoValue" }
                                 ]
                             },
-                            "ec2sshsetup",
+                            {
+                                "Fn::If" :
+                                [
+                                    "ConfigureEC2SSH",
+                                    "ec2sshsetup",
+                                    { "Ref" : "AWS::NoValue" }
+                                ]
+                            },
                             "finalize",
                             {
                                 "Fn::If" :
@@ -502,7 +523,7 @@
                                 "command": 
                                 { "Fn::Join" : [ "", [ 
                                         "echo ", 
-                                        { "Ref" : "IAMGroup" },
+                                        { "Ref" : "IAMGroupSSH" },
                                         " > /usr/local/bin/groupname\n" 
                                 ]]}
                             }
@@ -673,7 +694,12 @@
                 },
                 "IamInstanceProfile" : 
                 {
-                    "Ref": "InstanceProfile"
+                    "Fn::If" :
+                    [
+                        "ConfigureEC2SSH",
+                        { "Ref" : "InstanceProfile" },
+                        { "Ref" : "AWS::NoValue" }
+                    ]
                 },
                 "UserData" :
                 {
